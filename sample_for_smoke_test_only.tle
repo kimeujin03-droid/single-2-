@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+from pathlib import Path
+import pandas as pd
+
+LADDER = ["0_1", "0_2", "0_3", "0_4", "0_5", "3_22", "2_22", "1_22", "0_22"]
+STRAT_PATH = Path("hera_catalog/selected_baselines_groupwise_stratified.csv")
+OUT = Path("hera_catalog/final_pilot_baselines.csv")
+OUT.parent.mkdir(exist_ok=True)
+
+strat = []
+if STRAT_PATH.exists():
+    df = pd.read_csv(STRAT_PATH)
+    strat = list(df["baseline"].astype(str)) if "baseline" in df.columns else []
+final = []
+for b in LADDER + strat:
+    if b not in final:
+        final.append(b)
+out = pd.DataFrame({"baseline": final})
+out["source_role"] = out["baseline"].apply(lambda x: "ladder+stratified" if (x in LADDER and x in strat) else ("ladder" if x in LADDER else "stratified"))
+out.to_csv(OUT, index=False)
+print(out.to_string(index=False))
+print("n final:", len(out))
+print("saved", OUT)

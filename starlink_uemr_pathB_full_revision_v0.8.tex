@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+from pathlib import Path
+import argparse
+import numpy as np
+import pandas as pd
+import yaml
+
+p = argparse.ArgumentParser()
+p.add_argument("--selected", default="hera_catalog/final_pilot_baselines.csv")
+p.add_argument("--out", default="configs/pathB_hera_final_pilot.yaml")
+p.add_argument("--template", default="configs/pathB_template.yaml")
+p.add_argument("--pol", default="ee")
+p.add_argument("--n-null", type=int, default=50)
+args = p.parse_args()
+selected = pd.read_csv(args.selected)
+strat_path = Path("hera_catalog/selected_baselines_groupwise_stratified.csv")
+strat = pd.read_csv(strat_path) if strat_path.exists() else pd.DataFrame()
+qc_path = Path("hera_catalog/background_qc_summary_ranked.csv")
+qc = pd.read_csv(qc_path) if qc_path.exists() else pd.DataFrame()
+with open(args.template, "r", encoding="utf-8") as f:
+    cfg = yaml.safe_load(f)
+backgrounds = []
+for _, r in selected.iterrows():
+    b = str(r["baseline"])
+    role = str(r.get("source_role", "selected"))
+    bg = {
+        "id": f"bg_{b}_{role}",
+        "path": f"backgrounds/bg_{b}_{args.pol}.npz",
+        "product": "HERA_H6C_IDR2_redavg_smoothcal_inpaint_500ns_lstcal",
+        "processing_history": (
+            "Processed HERA H6C IDR2 single-baseline LST visibility product "
+            "from redavg-smoothcal-inpaint-500ns-lstcal. Not raw correlator data; "
+            "PathB operator P is applied on top of this public product."
+        ),
+        "flag_state": "uvh5_flags_and_nsamples_exported_to_weights_tf",
+        "use_native_baseline": True,
+        "selection_role": role,
+    }
+    if not strat.empty and b in set(strat["baseline"].astype(str)):
+        sr = strat[strat["baseline"].astype(str) == b].iloc[0]
+        bg["baseline_group"] = str(sr.get("length_group", "unknown"))
+        bg["noise_tier"] = str(sr.get("frf_noise_tier_groupwise", "unknown"))
+        for col in ["frf_loss_median", "frf_loss_p95", "baseline_length_m", "orientation_deg"]:
+            if col in sr:
+                try: bg[col] = float(sr[col])
+                except Exception: pass
+    elif not qc.empty and b in set(qc["baseline"].astype(str)):
+        qr = qc[qc["baseline"].astype(str) == b].iloc[0]
+        bg["baseline_group"] = str(qr.get("length_group", "unknown"))
+        bg["noise_tier"] = str(qr.get("noise_tier_ranked", "unknown"))
+        for col in ["baseline_length_m", "orientation_deg"]:
+            if col in qr:
+                try: bg[col] = float(qr[col])
+                except Exception: pass
+    else:
+        bg["baseline_group"] = "unknown"
+        bg["noise_tier"] = "unknown"
+    backgrounds.append(bg)
+cfg["backgrounds"] = backgrounds
+cfg["baseline_groups"] = []
+cfg.setdefault("beam", {})["mode"] = "none"
+cfg.setdefault("starlink", {})["range_attenuation_mode"] = "none_observed_apparent_flux"
+cfg["starlink"]["reference_flux_jy"] = 100.0
+cfg.setdefault("experiment", {})
+cfg["experiment"]["flux_grid_jy"] = [10, 30, 100, 300, 1000]
+cfg["experiment"]["flux_values_jy"] = [10, 30, 100, 300, 1000]
+cfg.setdefault("metrics", {}).setdefault("phase_randomized_null", {})
+cfg["metrics"]["phase_randomized_null"]["mode"] = "per_time"
+cfg["metrics"]["phase_randomized_null"]["n_trials"] = int(args.n_null)
+out = Path(args.out); out.parent.mkdir(exist_ok=True)
+out.write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+print("wrote", out)
+print("n backgrounds:", len(backgrounds))
+for bg in backgrounds:
+    print(bg["id"], bg["path"])

@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+from pathlib import Path
+import argparse
+import pandas as pd
+import requests
+
+p = argparse.ArgumentParser()
+p.add_argument("--selected", default="hera_catalog/final_pilot_baselines.csv")
+p.add_argument("--catalog", default="hera_catalog/h6c_idr2_pspec_files_long.csv")
+p.add_argument("--types", default="uvh5,ipynb")
+p.add_argument("--outdir", default="hera_downloads")
+args = p.parse_args()
+sel = pd.read_csv(args.selected)
+targets = set(sel["baseline"].astype(str))
+cat = pd.read_csv(args.catalog)
+cat["baseline"] = cat["baseline"].astype(str)
+wanted = [x.strip() for x in args.types.split(",") if x.strip()]
+todo = cat[cat["baseline"].isin(targets) & cat["ftype"].isin(wanted)].copy()
+outdir = Path(args.outdir); outdir.mkdir(exist_ok=True)
+print("targets:", sorted(targets))
+print("n files:", len(todo))
+for _, row in todo.iterrows():
+    fn = outdir / row["filename"]
+    if fn.exists():
+        print("exists:", fn)
+        continue
+    print("downloading:", row["filename"])
+    with requests.get(row["url"], stream=True, timeout=600) as r:
+        r.raise_for_status()
+        with open(fn, "wb") as f:
+            for chunk in r.iter_content(chunk_size=1024*1024):
+                if chunk:
+                    f.write(chunk)
+    print("saved:", fn, fn.stat().st_size/1e6, "MB")
